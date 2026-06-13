@@ -1,6 +1,0 @@
-artifact_location: file:///Users/pratishthagaur/Documents/diabetic-optimizer/mlruns/934063601509854882
-creation_time: 1780167025984
-experiment_id: '934063601509854882'
-last_update_time: 1780167025984
-lifecycle_stage: active
-name: glucose_lstm

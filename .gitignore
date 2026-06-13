@@ -16,8 +16,14 @@ pip-wheel-metadata/
 .vscode/
 *.swp
 
-# Models and data
-models/
-data/*.csv
+# Trained model artifacts (regenerate via train.py)
+models/saved/
 *.pt
 *.pth
+
+# Data files (regenerate via simulator + preprocessing)
+data/*.csv
+
+# MLflow tracking data (local experiment logs)
+mlruns/
+mlartifacts/
