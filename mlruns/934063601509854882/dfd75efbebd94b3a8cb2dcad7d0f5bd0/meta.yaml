@@ -1,0 +1,15 @@
+artifact_uri: file:///Users/pratishthagaur/Documents/diabetic-optimizer/mlruns/934063601509854882/dfd75efbebd94b3a8cb2dcad7d0f5bd0/artifacts
+end_time: 1780167034488
+entry_point_name: ''
+experiment_id: '934063601509854882'
+lifecycle_stage: active
+run_id: dfd75efbebd94b3a8cb2dcad7d0f5bd0
+run_name: efficient-crow-358
+run_uuid: dfd75efbebd94b3a8cb2dcad7d0f5bd0
+source_name: ''
+source_type: 4
+source_version: ''
+start_time: 1780167026041
+status: 3
+tags: []
+user_id: pratishthagaur
