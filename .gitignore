@@ -27,3 +27,6 @@ data/*.csv
 # MLflow tracking data (local experiment logs)
 mlruns/
 mlartifacts/
+
+# dependencies
+frontend/node_modules/
