@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
+const API = ""; // empty = relative URL, works everywhere
+
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const C = {
   bg: "#0A0F1E",
@@ -259,7 +261,7 @@ export default function App() {
 
   // Health check on mount
   useEffect(() => {
-    fetch("http://localhost:8000/health")
+    fetch(`${API}/health`)
       .then((r) => r.json())
       .then(setHealth)
       .catch(() => setHealth({ status: "unreachable" }));
@@ -296,12 +298,12 @@ export default function App() {
         parsed[parsed.length - 3 < 0 ? 0 : parsed.length - 3];
 
       const [predRes, recRes] = await Promise.all([
-        fetch("http://localhost:8000/predict", {
+        fetch(`${API}/predict`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ glucose_history: parsed, current_hour: hour }),
         }),
-        fetch("http://localhost:8000/recommend", {
+        fetch(`${API}/recommend`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

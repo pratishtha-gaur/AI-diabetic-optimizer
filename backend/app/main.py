@@ -19,13 +19,21 @@
 # This is the standard production pattern for ML APIs — never
 # load models inside request handlers.
 
+# backend/app/main.py  (production-ready version)
+#
+# Changes from Phase 4:
+#   1. CORS origins read from environment variable
+#   2. Serves React frontend's built static files
+#      so one server handles both API and UI
+
 import os
 import sys
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
-# Add project root to sys.path
 root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.append(root)
 
@@ -34,139 +42,86 @@ from .services.predictor import predictor
 from .services.rl_agent import recommender
 from .routers import predict, recommend
 
-
-# ──────────────────────────────────────────────
-# Model paths — relative to project root
-# ──────────────────────────────────────────────
 LSTM_MODEL_PATH = os.path.join(root, "models", "saved", "glucose_lstm.pt")
 RL_MODEL_PATH   = os.path.join(root, "models", "saved", "glucose_rl_agent.zip")
 
+# ── Frontend static files path ─────────────────────────────────────
+FRONTEND_DIST = os.path.join(root, "frontend", "dist")
 
-# ──────────────────────────────────────────────
-# Lifespan — runs at startup and shutdown
-# ──────────────────────────────────────────────
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Everything BEFORE 'yield' runs at startup.
-    Everything AFTER 'yield' runs at shutdown.
-
-    This is where we load both models into memory.
-    FastAPI guarantees this runs before any request is served.
-    """
     print("🚀 Starting AI Diabetic Lifestyle Optimizer API...")
-
-    #The lifespan startup pattern is still used to load models once into memory, 
-    # but the exception handling changes the behavior 
-    # from strict fast failure to graceful degradation.
-    
-    # Load LSTM predictor
     try:
         predictor.load(LSTM_MODEL_PATH)
     except FileNotFoundError:
-        print(f"⚠️  LSTM model not found at {LSTM_MODEL_PATH}")
-        print("   Run: python models/lstm/train.py")
+        print(f"⚠️  LSTM model not found. Run: python train_all.py")
 
-    # Load RL agent
     try:
         recommender.load(RL_MODEL_PATH)
     except FileNotFoundError:
-        print(f"⚠️  RL agent not found at {RL_MODEL_PATH}")
-        print("   Run: python models/rl/train_agent.py")
+        print(f"⚠️  RL agent not found. Run: python train_all.py")
 
-    print("✅ API ready — visit http://localhost:8000/docs for Swagger UI\n")
-
-    yield  # ← server runs here, handling requests
-
-    # Shutdown cleanup (nothing needed for our simple models)
+    print("✅ API ready\n")
+    yield
     print("👋 Shutting down...")
 
 
-# ──────────────────────────────────────────────
-# FastAPI application
-# ──────────────────────────────────────────────
 app = FastAPI(
     title       = "AI Diabetic Lifestyle Optimizer",
-    description = (
-        "An AI-powered API that predicts short-term glucose levels (LSTM) "
-        "and provides safe lifestyle recommendations (PPO Reinforcement Learning) "
-        "for Type 1 diabetic users."
-    ),
+    description = "LSTM glucose forecasting + PPO lifestyle recommendations",
     version     = "1.0.0",
     lifespan    = lifespan,
 )
 
+# ── CORS — reads from environment variable in production ────────────
+ALLOWED_ORIGINS = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:3000,http://localhost:5173"
+).split(",")
 
-# ──────────────────────────────────────────────
-# CORS middleware
-# ──────────────────────────────────────────────
-# CORS (Cross-Origin Resource Sharing) allows your React frontend
-# (running on localhost:3000) to call this API (on localhost:8000).
-# Without this, browsers block the request for security reasons.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins     = ["http://localhost:3000", "http://localhost:5173"],
+    allow_origins     = ALLOWED_ORIGINS,
     allow_credentials = True,
     allow_methods     = ["*"],
     allow_headers     = ["*"],
 )
 
-
-# ──────────────────────────────────────────────
-# Mount routers
-# ──────────────────────────────────────────────
-# Each router handles a group of related endpoints.
-# The prefix here + prefix in the router = full path.
-# e.g. app prefix="" + router prefix="/predict" → /predict
+# ── API routers ─────────────────────────────────────────────────────
 app.include_router(predict.router)
 app.include_router(recommend.router)
 
 
-# ──────────────────────────────────────────────
-# Health check endpoint
-# ──────────────────────────────────────────────
-@app.get(
-    "/health",
-    response_model=HealthResponse,
-    tags=["Health"],
-    summary="Check API and model status",
-)
+# ── Health endpoint ─────────────────────────────────────────────────
+@app.get("/health", response_model=HealthResponse, tags=["Health"])
 async def health_check() -> HealthResponse:
-    """
-    GET /health
-
-    Returns the status of the API and whether both ML models
-    loaded successfully at startup. In production, monitoring
-    systems call this endpoint to verify the service is alive.
-    """
     lstm_ok = predictor.loaded
     rl_ok   = recommender.loaded
-
     if lstm_ok and rl_ok:
-        status  = "healthy"
-        message = "Both models loaded and ready"
+        status, message = "healthy", "Both models loaded and ready"
     elif lstm_ok or rl_ok:
-        status  = "degraded"
-        message = "One model unavailable — partial functionality only"
+        status, message = "degraded", "One model unavailable"
     else:
-        status  = "unhealthy"
-        message = "No models loaded — run train.py scripts first"
-
-    return HealthResponse(
-        status           = status,
-        lstm_loaded      = lstm_ok,
-        rl_agent_loaded  = rl_ok,
-        message          = message,
-    )
+        status, message = "unhealthy", "No models loaded"
+    return HealthResponse(status=status, lstm_loaded=lstm_ok, rl_agent_loaded=rl_ok, message=message)
 
 
-# ──────────────────────────────────────────────
-# Root endpoint
-# ──────────────────────────────────────────────
-@app.get("/", tags=["Health"])
-async def root():
-    return {
-        "message": "AI Diabetic Lifestyle Optimizer API",
-        "docs":    "http://localhost:8000/docs",
-        "health":  "http://localhost:8000/health",
-    }
+# ── Serve React frontend (production) ──────────────────────────────
+# In production (inside Docker), the built React app lives at
+# frontend/dist/. We mount it so the same server handles both
+# the API (/predict, /recommend) and the web UI (/).
+if os.path.exists(FRONTEND_DIST):
+    # Serve static assets (JS, CSS, images)
+    app.mount("/assets", StaticFiles(directory=os.path.join(FRONTEND_DIST, "assets")), name="assets")
+
+    # Catch-all: serve index.html for any non-API route
+    # This makes React Router work correctly
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_frontend(full_path: str):
+        index = os.path.join(FRONTEND_DIST, "index.html")
+        return FileResponse(index)
+else:
+    @app.get("/", tags=["Health"])
+    async def root():
+        return {"message": "AI Diabetic Lifestyle Optimizer API", "docs": "/docs"}
