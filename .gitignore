@@ -6,6 +6,7 @@ __pycache__/
 *.pdb
 *.egg-info/
 .env
+.env.*
 .venv
 venv/
 pip-wheel-metadata/
@@ -15,11 +16,13 @@ pip-wheel-metadata/
 .idea/
 .vscode/
 *.swp
+*.swo
 
 # Trained model artifacts (regenerate via train.py)
 models/saved/
 *.pt
 *.pth
+*.zip
 
 # Data files (regenerate via simulator + preprocessing)
 data/*.csv
@@ -30,3 +33,14 @@ mlartifacts/
 
 # dependencies
 frontend/node_modules/
+
+# Build output
+frontend/dist/
+frontend/.vite/
+
+# Jupyter / notebooks
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
+# OS
+__MACOSX/
