@@ -67,7 +67,7 @@ plt.title("Glucose Smoothing & Trend Features")
 plt.legend(); plt.tight_layout(); plt.show()
 '''
 
-df1 = pd.read_csv("data/glucose_preprocessed.csv")
-sns.heatmap(df1[["glucose_mg_dl", "glucose_ma_6", "glucose_change", "glucose_norm"]].corr(), annot=True, cmap="coolwarm")
-plt.title("Feature Correlations")
-plt.show()
+# df1 = pd.read_csv("data/glucose_preprocessed.csv")
+# sns.heatmap(df1[["glucose_mg_dl", "glucose_ma_6", "glucose_change", "glucose_norm"]].corr(), annot=True, cmap="coolwarm")
+# plt.title("Feature Correlations")
+# plt.show()

@@ -99,7 +99,7 @@ def generate_multi_day(days=7, step_minutes=5, plot=False):
 #  MAIN EXECUTION
 # ------------------------------------------------------------
 if __name__ == "__main__":
-    df = generate_multi_day(days=7, plot=True)
+    df = generate_multi_day(days=7, plot=False)
 
 
 
