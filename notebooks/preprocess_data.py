@@ -3,74 +3,92 @@
 import pandas as pd
 import numpy as np
 import os
-from sklearn.preprocessing import MinMaxScaler
-
 import matplotlib
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 
-import seaborn as sns
+# ── Normalization constants ───────────────────────────────────────────
+# CHANGED: 70–250 → 40–400
+# Why: OhioT1DM patients regularly hit 300–400 mg/dL.
+# The old range caused values above 250 to normalize to >1.0,
+# which the LSTM was never trained to handle — every high glucose
+# prediction was systematically wrong.
+# 40 is the CGM hardware floor, 400 is the CGM hardware ceiling.
+# Using hardware limits means NO real reading will ever fall outside [0,1].
+GLUCOSE_MIN  = 40.0
+GLUCOSE_MAX  = 400.0
+CHANGE_SCALE = 30.0   # max realistic 5-min change, unchanged
 
-# ------------------------------------------------------------
-# 1️⃣ Load the dataset
-# ------------------------------------------------------------
+
+def normalize_glucose(series):
+    """Linear [0,1] normalization using CGM hardware bounds."""
+    return (series - GLUCOSE_MIN) / (GLUCOSE_MAX - GLUCOSE_MIN)
+
+
+def normalize_change(series):
+    """Signed [-1,+1] normalization. Negative=falling, positive=rising."""
+    return np.clip(series / CHANGE_SCALE, -1.0, 1.0)
+
+
+# ── Load dataset ──────────────────────────────────────────────────────
 root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-data_path = os.path.join(root_dir, "data", "glucose_7days.csv")
+data_dir = os.path.join(root_dir, "data")
+
+for filename in ["glucose_ohio.csv", "glucose_365days.csv", "glucose_7days.csv"]:
+    data_path = os.path.join(data_dir, filename)
+    if os.path.exists(data_path):
+        print(f"📂 Loading: {filename}")
+        break
+else:
+    raise FileNotFoundError("No glucose CSV found. Run parse_ohio.py or synthetic.py first.")
 
 df = pd.read_csv(data_path)
-print("✅ Loaded dataset:", df.shape)
-print(df.head())
+print(f"✅ Loaded: {len(df):,} rows")
+print(f"   Glucose range in data: {df['glucose_mg_dl'].min():.0f} – {df['glucose_mg_dl'].max():.0f} mg/dL")
 
-# ------------------------------------------------------------
-# 2️⃣ Convert timestamp & extract useful time features
-# ------------------------------------------------------------
+# ── Time features ─────────────────────────────────────────────────────
 df["timestamp"] = pd.to_datetime(df["timestamp"])
-df["hour"] = df["timestamp"].dt.hour + df["timestamp"].dt.minute / 60.0
-df["dayofweek"] = df["timestamp"].dt.dayofweek  # 0=Mon, 6=Sun
+df["hour"]      = df["timestamp"].dt.hour + df["timestamp"].dt.minute / 60.0
+df["dayofweek"] = df["timestamp"].dt.dayofweek
 
-# ------------------------------------------------------------
-# 3️⃣ Add engineered features
-# ------------------------------------------------------------
-# Rolling mean (smooth average glucose trend)
-df["glucose_ma_3"] = df["glucose_mg_dl"].rolling(window=3, min_periods=1).mean()
-df["glucose_ma_6"] = df["glucose_mg_dl"].rolling(window=6, min_periods=1).mean()
+# ── Feature engineering ───────────────────────────────────────────────
+df["glucose_norm"] = normalize_glucose(df["glucose_mg_dl"])
+df["glucose_ma_3"] = normalize_glucose(
+    df["glucose_mg_dl"].rolling(window=3, min_periods=1).mean()
+)
+df["glucose_ma_6"] = normalize_glucose(
+    df["glucose_mg_dl"].rolling(window=6, min_periods=1).mean()
+)
 
-# Rate of change (how fast glucose is increasing/decreasing)
-df["glucose_change"] = df["glucose_mg_dl"].diff().fillna(0)
+raw_change           = df["glucose_mg_dl"].diff().fillna(0)
+df["glucose_change"] = normalize_change(raw_change)
+df["recent_slope"]   = normalize_change(
+    raw_change.rolling(window=3, min_periods=1).mean()
+)
 
-# Time-of-day cyclical encoding (for model awareness)
 df["sin_hour"] = np.sin(2 * np.pi * df["hour"] / 24)
 df["cos_hour"] = np.cos(2 * np.pi * df["hour"] / 24)
 
-# ------------------------------------------------------------
-# 4️⃣ Normalize glucose values (0-1 scaling)
-# ------------------------------------------------------------
-scaler = MinMaxScaler()
-df["glucose_norm"] = scaler.fit_transform(df[["glucose_mg_dl"]])
+# ── Sanity check: all glucose_norm values should be in [0, 1] ─────────
+out_of_range = ((df["glucose_norm"] < 0) | (df["glucose_norm"] > 1)).sum()
+if out_of_range > 0:
+    print(f"⚠️  {out_of_range} glucose_norm values outside [0,1] — check GLUCOSE_MIN/MAX")
+else:
+    print(f"✅ All glucose_norm values within [0, 1]")
 
-print("\n✅ Feature engineering done. Columns now:")
-print(df.columns.tolist())
+# ── Feature summary ───────────────────────────────────────────────────
+FEATURE_COLS = [
+    "glucose_norm", "glucose_ma_3", "glucose_ma_6",
+    "glucose_change", "recent_slope", "sin_hour", "cos_hour",
+]
+print(f"\n✅ Features ({len(FEATURE_COLS)}):")
+for col in FEATURE_COLS:
+    print(f"   {col:20s}: [{df[col].min():+.3f}, {df[col].max():+.3f}]  mean={df[col].mean():+.3f}")
 
-# ------------------------------------------------------------
-# 5️⃣ Save preprocessed dataset
-# ------------------------------------------------------------
-out_path = os.path.join(root_dir, "data", "glucose_preprocessed.csv")
+pos = (df["glucose_change"] > 0).mean()
+neg = (df["glucose_change"] < 0).mean()
+print(f"\n   glucose_change: {pos*100:.1f}% rising  {neg*100:.1f}% falling")
+
+# ── Save ──────────────────────────────────────────────────────────────
+out_path = os.path.join(data_dir, "glucose_preprocessed.csv")
 df.to_csv(out_path, index=False)
-print(f"✅ Saved preprocessed data → {out_path}")
-
-# ------------------------------------------------------------
-# 6️⃣ Optional visualization
-# ------------------------------------------------------------
-'''
-plt.figure(figsize=(12,5))
-plt.plot(df["timestamp"], df["glucose_mg_dl"], label="Raw Glucose")
-plt.plot(df["timestamp"], df["glucose_ma_6"], label="6-pt Moving Avg", alpha=0.8)
-plt.xlabel("Time"); plt.ylabel("Glucose (mg/dL)")
-plt.title("Glucose Smoothing & Trend Features")
-plt.legend(); plt.tight_layout(); plt.show()
-'''
-
-# df1 = pd.read_csv("data/glucose_preprocessed.csv")
-# sns.heatmap(df1[["glucose_mg_dl", "glucose_ma_6", "glucose_change", "glucose_norm"]].corr(), annot=True, cmap="coolwarm")
-# plt.title("Feature Correlations")
-# plt.show()
+print(f"\n✅ Saved → {out_path}")

@@ -48,7 +48,7 @@ class GlucoseLSTM(nn.Module):
 
     def __init__(
         self,
-        input_size:  int = 6,
+        input_size:  int = 7,
         hidden_size: int = 64,
         num_layers:  int = 2,
         dropout:     float = 0.2,
