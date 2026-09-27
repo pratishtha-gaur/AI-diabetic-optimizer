@@ -111,12 +111,24 @@ class PredictResponse(BaseModel):
 
     Fields:
         predicted_glucose   : next glucose value in mg/dL (de-normalized from model output)
+        uncertainty_std      : standard deviation of the model's predictions across MC-Dropout samples
+        lower_bound        : lower edge of the 95% confidence interval, mg/dL
+        upper_bound        : upper edge of the 95% confidence interval, mg/dL
         confidence_range    : ±range in mg/dL (based on model's historical MAE of 2.51)
         status              : clinical interpretation string
     """
     predicted_glucose: float = Field(
         description="Predicted glucose in mg/dL for next 5-minute reading",
         examples=[138.2]
+    )
+    uncertainty_std : float = Field(
+        description="Standard deviation of the model's predictions across MC-Dropout samples"
+    )
+    lower_bound : float = Field(
+        description = "Lower edge of the 95% confidence interval , mg/dL"
+    )
+    upper_bound : float = Field(
+        description = "Upper edge of the 95% confidence interval , mg/dL"
     )
     confidence_range: float = Field(
         description="Expected error margin in mg/dL (±MAE from evaluation)",

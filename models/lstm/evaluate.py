@@ -49,22 +49,54 @@ def evaluate():
           f"(val_loss={checkpoint['val_loss']:.6f})")
     print(f"   input_size={config['input_size']}  hidden_size={config['hidden_size']}")
 
+    # ---- Calibration uncertainty scaling using the validation set ----
+    # we measure the real multiplier needed for 95% coverage instead of
+    # blindly trusting the "1.96 ~ 95% " rule , which assumes errors are a 
+    # perfect bell curve (ours clearly are not , given the undercoverage)
+    val_data = df_to_array(val_df)
+    val_ds = GlucoseDataset(val_data , seq_len=config["seq_len"] , horizon = config["horizon"])
+    val_loader = DataLoader(val_ds , batch_size = 64 , shuffle=False)
+
+    val_preds , val_stds, val_targets = [], [], []
+    with torch.no_grad():
+        for X_batch, y_batch in val_loader:
+            mean_pred , std_pred = model.predict_with_uncertainty(X_batch.to(device) , n_samples=30)
+            val_preds.extend(mean_pred.cpu().numpy().flatten())
+            val_stds.extend(std_pred.cpu().numpy().flatten())
+            val_targets.extend(y_batch.numpy().flatten())
+
+    val_preds_mgdl   = np.array(val_preds)   * (GLUCOSE_MAX - GLUCOSE_MIN) + GLUCOSE_MIN
+    val_stds_mgdl    = np.array(val_stds)    * (GLUCOSE_MAX - GLUCOSE_MIN)
+    val_targets_mgdl = np.array(val_targets) * (GLUCOSE_MAX - GLUCOSE_MIN) + GLUCOSE_MIN
+
+    eps = 1e-6 #avoids divide by zero on the rare sample where std~0
+    normalized_residuals = np.abs(val_targets_mgdl - val_preds_mgdl) / (val_stds_mgdl + eps)
+    CALIBRATION_FACTOR = np.percentile(normalized_residuals,95)
+
+    print(f"\n🔧 Calibration factor (replaces the theoretical 1.96): {CALIBRATION_FACTOR:.2f}")
+
     test_ds = GlucoseDataset(test_data, seq_len=config["seq_len"], horizon=config["horizon"])
     loader  = DataLoader(test_ds, batch_size=64, shuffle=False)
 
-    all_preds, all_targets = [], []
+    all_preds, all_stds, all_targets = [], [], []
     with torch.no_grad():
         for X_batch, y_batch in loader:
-            preds = model(X_batch.to(device)).cpu().numpy()
-            all_preds.extend(preds.flatten())
+            mean_pred , std_pred = model.predict_with_uncertainty(X_batch.to(device) , n_samples=30)
+            all_preds.extend(mean_pred.cpu().numpy().flatten())
+            all_stds.extend(std_pred.cpu().numpy().flatten())
             all_targets.extend(y_batch.numpy().flatten())
 
     preds_norm   = np.array(all_preds)
+    stds_norm = np.array(all_stds)
     targets_norm = np.array(all_targets)
 
     # De-normalize using the same range as preprocess_data.py
     preds_mgdl   = preds_norm   * (GLUCOSE_MAX - GLUCOSE_MIN) + GLUCOSE_MIN
+    stds_mgdl = stds_norm * (GLUCOSE_MAX - GLUCOSE_MIN) #std scales like the mean , no shift
     targets_mgdl = targets_norm * (GLUCOSE_MAX - GLUCOSE_MIN) + GLUCOSE_MIN
+
+    lower_mgdl = preds_mgdl - CALIBRATION_FACTOR*stds_mgdl
+    upper_mgdl = preds_mgdl + CALIBRATION_FACTOR*stds_mgdl
 
     mae  = mean_absolute_error(targets_mgdl, preds_mgdl)
     rmse = np.sqrt(mean_squared_error(targets_mgdl, preds_mgdl))
@@ -95,6 +127,24 @@ def evaluate():
             zone_mae = mean_absolute_error(targets_mgdl[mask], preds_mgdl[mask])
             print(f"     {label}: {zone_mae:.1f} mg/dL  ({mask.sum():,} samples)")
     print("="*52)
+
+    # - uncertainty calibration check ---
+    # coverage = what % of the time did the true value actually fall
+    # inside our predicted 95% interval? Should be ~95% if the uncertainty is well-calibrated.
+    coverage = ((targets_mgdl >= lower_mgdl) & (targets_mgdl <= upper_mgdl)).mean() *100
+    avg_width = (upper_mgdl - lower_mgdl).mean()
+
+    print(f"\n  Uncertainty calibration check:")
+    print(f"   Coverage (want ~95%):        {coverage:.1f}%")
+    print(f"   Avg interval width:          {avg_width:.1f} mg/dL")
+    print(f"   MAE (for comparison):        {mae:.1f} mg/dL")
+
+    if 90<= coverage <=98:
+        print("🟢 Uncertainty well-calibrated")
+    elif coverage<90 :
+        print("🔴 Overconfident — intervals too narrow, model doesn't know how wrong it can be")
+    else:
+        print("🟡 Underconfident — intervals too wide, less useful but at least safe")
 
     if mae < 15:
         print("🟢 Excellent MAE — clinically competitive")

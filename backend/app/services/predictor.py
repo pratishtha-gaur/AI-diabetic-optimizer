@@ -16,7 +16,8 @@ from models.lstm.dataset import FEATURE_COLS
 GLUCOSE_MIN  = 40.0
 GLUCOSE_MAX  = 400.0
 CHANGE_SCALE = 30.0
-MODEL_MAE    = 22.67   # update this after retraining
+MODEL_MAE    = 3.35 #from evaluate.py - update after any retrain
+CALIBRATION_FACTOR = 4.50 #from evaluate.py's calibration step - update after any retrain
 
 
 def _normalize_glucose(v):
@@ -88,16 +89,25 @@ class GlucosePredictor:
         features = self._build_features(glucose_history, current_hour)
         x        = torch.tensor(features, dtype=torch.float32).unsqueeze(0)
 
-        with torch.no_grad():
-            pred_norm = self.model(x).item()
+        mean_norm , std_norm = self.model.predict_with_uncertainty(x, n_samples=30)
+        mean_norm = mean_norm.item()
+        std_norm = std_norm.item()
 
-        predicted_mgdl = pred_norm * (GLUCOSE_MAX - GLUCOSE_MIN) + GLUCOSE_MIN
-        predicted_mgdl = float(np.clip(predicted_mgdl, 40.0, 400.0))
+        #de-normalize the mean the same way as before
+        predicted_mgdl = mean_norm *(GLUCOSE_MAX - GLUCOSE_MIN) + GLUCOSE_MIN
+        predicted_mgdl = float(np.clip(predicted_mgdl , 40.0 , 400.0))
+
+        #de-normalize the spread too - std scales the same way
+        #since it;s a linear tranform (multiplying the same range)
+        uncertainty_mgdl = std_norm * (GLUCOSE_MAX - GLUCOSE_MIN)
 
         return {
-            "predicted_glucose": round(predicted_mgdl, 1),
-            "confidence_range":  MODEL_MAE,
-            "status":            self._classify_glucose(predicted_mgdl),
+            "predicted_glucose" : round(predicted_mgdl , 1),
+            "uncertainty_std" : round(uncertainty_mgdl ,1),
+            "lower_bound" : round(predicted_mgdl - CALIBRATION_FACTOR * uncertainty_mgdl , 1),
+            "upper_bound" : round(predicted_mgdl + CALIBRATION_FACTOR * uncertainty_mgdl , 1),
+            "confidence_range" : MODEL_MAE , #its the historical MAE , still useful
+            "status" : self._classify_glucose(predicted_mgdl),
         }
 
     def _classify_glucose(self, g: float) -> str:

@@ -128,6 +128,28 @@ class GlucoseLSTM(nn.Module):
         """Utility: how many trainable weights does this model have?"""
         return sum(p.numel() for p in self.parameters() if p.requires_grad)
 
+    def predict_with_uncertainty(self, x ,n_samples=30):
+        """
+        Runs the model n_samples times with dropout ACTIVE (not the usual inference behaviour),
+        and returns the mean prediction plus the spread across samples - our uncertainty estimate
+        """
+
+        self.train()  #this keeps dropout ON - normally eval() would turn it off
+        predictions = []
+
+        with torch.no_grad():  #we still dont't need gradients, just forward passes
+            for _ in range(n_samples):
+                pred = self.forward(x)
+                predictions.append(pred)
+
+        self.eval() # reset back to normal inference mode when done
+
+        predictions = torch.stack(predictions) #shape : (n_samples,batch,1)
+        mean_pred = predictions.mean(dim=0)
+        std_pred = predictions.std(dim=0)
+
+        return mean_pred , std_pred
+
 
 # ──────────────────────────────────────────────
 # Quick test — run this file directly to verify

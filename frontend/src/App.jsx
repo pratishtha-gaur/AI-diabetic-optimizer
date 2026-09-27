@@ -58,7 +58,14 @@ const DEFAULT_HISTORY = [
 const DEFAULT_HOUR = new Date().getHours() + new Date().getMinutes() / 60;
 
 // ─── Glucose Sparkline Canvas ─────────────────────────────────────────────────
-function GlucoseCanvas({ history, predicted, width, height }) {
+function GlucoseCanvas({
+  history,
+  predicted,
+  lowerBound,
+  upperBound,
+  width,
+  height,
+}) {
   const ref = useRef();
   const animRef = useRef(0);
 
@@ -71,7 +78,14 @@ function GlucoseCanvas({ history, predicted, width, height }) {
     canvas.height = height * dpr;
     ctx.scale(dpr, dpr);
 
-    const all = predicted ? [...history, predicted] : history;
+    const all = predicted
+      ? [
+          ...history,
+          predicted,
+          lowerBound ?? predicted,
+          upperBound ?? predicted,
+        ]
+      : history;
     const minV = Math.min(...all, 70) - 10;
     const maxV = Math.max(...all, 180) + 10;
     const pad = { l: 44, r: 28, t: 20, b: 32 };
@@ -174,6 +188,44 @@ function GlucoseCanvas({ history, predicted, width, height }) {
         ctx.fill();
       }
 
+      // Confidence interval band — drawn BEFORE the dot/glow so the
+      // dot visually sits on top of the band, not underneath it.
+      if (
+        predicted &&
+        progress === 1 &&
+        lowerBound != null &&
+        upperBound != null
+      ) {
+        const px = toX(history.length, history.length + 1);
+        const yTop = toY(upperBound);
+        const yBottom = toY(lowerBound);
+        const bandColor = glucoseColor(predicted);
+
+        // Shaded vertical band between the bounds
+        ctx.fillStyle = bandColor + "22";
+        ctx.fillRect(px - 14, yTop, 28, yBottom - yTop);
+        ctx.strokeStyle = bandColor + "55";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(px - 14, yTop, 28, yBottom - yTop);
+
+        // Whisker caps — the little horizontal ticks at top and bottom
+        ctx.strokeStyle = bandColor + "AA";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(px - 14, yTop);
+        ctx.lineTo(px + 14, yTop);
+        ctx.moveTo(px - 14, yBottom);
+        ctx.lineTo(px + 14, yBottom);
+        ctx.stroke();
+
+        // Numeric labels at each bound
+        ctx.fillStyle = C.textSec;
+        ctx.font = `9px 'DM Mono', monospace`;
+        ctx.textAlign = "left";
+        ctx.fillText(Math.round(upperBound), px + 18, yTop + 3);
+        ctx.fillText(Math.round(lowerBound), px + 18, yBottom + 3);
+      }
+
       // Predicted point
       if (predicted && progress === 1) {
         const px = toX(history.length, history.length + 1);
@@ -231,7 +283,7 @@ function GlucoseCanvas({ history, predicted, width, height }) {
     frame = 0;
     animRef.current = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(animRef.current);
-  }, [history, predicted, width, height]);
+  }, [history, predicted, lowerBound, upperBound, width, height]);
 
   return <canvas ref={ref} style={{ width, height, display: "block" }} />;
 }
@@ -543,7 +595,8 @@ export default function App() {
                       fontFamily: "'DM Mono', monospace",
                     }}
                   >
-                    ± {prediction.confidence_range} mg/dL
+                    {prediction.lower_bound}–{prediction.upper_bound} mg/dL
+                    (95%)
                   </div>
                   <div
                     style={{
@@ -578,6 +631,8 @@ export default function App() {
               <GlucoseCanvas
                 history={history}
                 predicted={prediction?.predicted_glucose}
+                lowerBound={prediction?.lower_bound}
+                upperBound={prediction?.upper_bound}
                 width={canvasW || 600}
                 height={CANVAS_H}
               />
@@ -961,9 +1016,14 @@ export default function App() {
                   glucoseColor(prediction.predicted_glucose),
                 ],
                 [
-                  "Confidence",
-                  `± ${prediction.confidence_range} mg/dL`,
+                  "95% Range",
+                  `${prediction.lower_bound}–${prediction.upper_bound} mg/dL`,
                   C.purple,
+                ],
+                [
+                  "Model MAE",
+                  `± ${prediction.confidence_range} mg/dL`,
+                  C.textMut,
                 ],
                 [
                   "Status",
